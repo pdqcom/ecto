@@ -1410,6 +1410,11 @@ defmodule Ecto.Repo do
 
   This callback is only invoked in transactions.
 
+  It is also invoked for transactions implicitly started by schema operations,
+  such as writes with associations, embeds, or `Ecto.Changeset.prepare_changes/2`
+  callbacks. If a schema operation runs inside an existing transaction, it does
+  not invoke this callback again.
+
   ## Examples
 
   Imagine you want to prepend a SQL comment to commit statements using the `commit_comment` option on transactions.
