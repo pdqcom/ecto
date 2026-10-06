@@ -424,7 +424,7 @@ defmodule Ecto.Repo.Schema do
     do_insert(repo, name, Ecto.Changeset.change(struct), tuplet)
   end
 
-  defp do_insert(repo, _name, %Changeset{valid?: true} = changeset, {adapter_meta, opts} = tuplet) do
+  defp do_insert(repo, name, %Changeset{valid?: true} = changeset, {adapter_meta, opts} = tuplet) do
     %{adapter: adapter} = adapter_meta
     %{prepare: prepare, repo_opts: repo_opts} = changeset
     opts = Keyword.merge(repo_opts, opts)
@@ -452,7 +452,7 @@ defmodule Ecto.Repo.Schema do
     changeset = Relation.surface_changes(changeset, struct, keep_fields ++ assocs)
     changeset = update_in(changeset.changes, &Map.drop(&1, drop_fields))
 
-    wrap_in_transaction(adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fn ->
+    wrap_in_transaction(repo, name, adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fn ->
       assoc_opts = assoc_opts(assocs, opts)
       user_changeset = run_prepare(changeset, prepare)
 
@@ -532,7 +532,7 @@ defmodule Ecto.Repo.Schema do
             "an Ecto.Changeset must be given instead"
   end
 
-  defp do_update(repo, _name, %Changeset{valid?: true} = changeset, {adapter_meta, opts} = tuplet) do
+  defp do_update(repo, name, %Changeset{valid?: true} = changeset, {adapter_meta, opts} = tuplet) do
     %{adapter: adapter} = adapter_meta
     %{prepare: prepare, repo_opts: repo_opts} = changeset
     opts = Keyword.merge(repo_opts, opts)
@@ -560,7 +560,7 @@ defmodule Ecto.Repo.Schema do
     changeset = update_in(changeset.changes, &Map.drop(&1, drop_fields))
 
     if changeset.changes != %{} or force? do
-      wrap_in_transaction(adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fn ->
+      wrap_in_transaction(repo, name, adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fn ->
         assoc_opts = assoc_opts(assocs, opts)
         user_changeset = run_prepare(changeset, prepare)
 
@@ -695,7 +695,7 @@ defmodule Ecto.Repo.Schema do
       |> add_read_after_writes(schema)
       |> fields_to_sources(dumper)
 
-    wrap_in_transaction(adapter, adapter_meta, opts, assocs != [], prepare, fn ->
+    wrap_in_transaction(repo, name, adapter, adapter_meta, opts, assocs != [], prepare, fn ->
       changeset = run_prepare(changeset, prepare)
 
       if changeset.valid? do
@@ -1270,23 +1270,19 @@ defmodule Ecto.Repo.Schema do
     end)
   end
 
-  defp wrap_in_transaction(adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fun) do
+  defp wrap_in_transaction(repo, name, adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fun) do
     %{changes: changes} = changeset
     changed = &Map.has_key?(changes, &1)
     relations_changed? = Enum.any?(assocs, changed) or Enum.any?(embeds, changed)
-    wrap_in_transaction(adapter, adapter_meta, opts, relations_changed?, prepare, fun)
+    wrap_in_transaction(repo, name, adapter, adapter_meta, opts, relations_changed?, prepare, fun)
   end
 
-  defp wrap_in_transaction(adapter, adapter_meta, opts, relations_changed?, prepare, fun) do
+  defp wrap_in_transaction(repo, name, adapter, adapter_meta, opts, relations_changed?, prepare, fun) do
     if (relations_changed? or prepare != []) and
          function_exported?(adapter, :transaction, 3) and
          not adapter.in_transaction?(adapter_meta) do
-      adapter.transaction(adapter_meta, opts, fn ->
-        case fun.() do
-          {:ok, struct} -> struct
-          {:error, changeset} -> adapter.rollback(adapter_meta, changeset)
-        end
-      end)
+      {fun, opts} = repo.prepare_transaction(fun, opts)
+      Ecto.Repo.Transaction.transact(repo, name, fun, {adapter_meta, opts})
     else
       fun.()
     end

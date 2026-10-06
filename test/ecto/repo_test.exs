@@ -2286,7 +2286,18 @@ defmodule Ecto.RepoTest do
 
       def prepare_transaction(fun_or_multi, opts) do
         send(self(), {:prepare_transaction, fun_or_multi, opts})
-        {fun_or_multi, Keyword.put(opts, :commit_comment, "my_comment")}
+
+        prepared =
+          if is_function(fun_or_multi, 0) do
+            fn repo ->
+              send(self(), {:prepared_transaction, repo, repo.in_transaction?()})
+              fun_or_multi.()
+            end
+          else
+            fun_or_multi
+          end
+
+        {prepared, Keyword.put(opts, :commit_comment, "my_comment")}
       end
     end
 
@@ -2301,6 +2312,121 @@ defmodule Ecto.RepoTest do
       assert {:ok, :ok} = PrepareTransactionRepo.transaction(fun)
       assert_received {:prepare_transaction, _, _}
       assert_received {:transaction, _fun, ^opts}
+    end
+
+    test "implicit transactions for embeds prepare the function and options" do
+      changeset =
+        %MySchemaEmbedsOne{}
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.put_embed(:embed, %MyEmbed{x: "inserted"})
+
+      assert {:ok, schema} = PrepareTransactionRepo.insert(changeset)
+      assert schema.embed.x == "inserted"
+      assert_received {:prepare_transaction, fun, _} when is_function(fun, 0)
+      assert_received {:prepared_transaction, PrepareTransactionRepo, true}
+      assert_received {:transaction, _, opts}
+      assert opts[:commit_comment] == "my_comment"
+      refute_received {:prepare_transaction, _, _}
+
+      changeset =
+        Ecto.Changeset.change(schema)
+        |> Ecto.Changeset.put_embed(:embed, Ecto.Changeset.change(schema.embed, x: "updated"))
+
+      assert {:ok, schema} = PrepareTransactionRepo.update(changeset)
+      assert schema.embed.x == "updated"
+      assert_received {:prepare_transaction, _, _}
+      assert_received {:prepared_transaction, PrepareTransactionRepo, true}
+      refute_received {:prepare_transaction, _, _}
+    end
+
+    test "implicit association transactions prepare only once" do
+      changeset =
+        %MySchemaWithAssoc{}
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.put_assoc(:parent, %MyParent{n: 1})
+
+      assert {:ok, schema} = PrepareTransactionRepo.insert(changeset)
+      assert schema.parent.n == 1
+      assert_received {:prepare_transaction, _, _}
+      assert_received {:prepared_transaction, PrepareTransactionRepo, true}
+      refute_received {:prepare_transaction, _, _}
+    end
+
+    for operation <- [:insert, :update, :delete] do
+      test "implicit #{operation} transactions preserve changeset rollback" do
+        changeset =
+          %MySchema{id: 1}
+          |> Ecto.Changeset.change(x: "changed")
+          |> Ecto.Changeset.prepare_changes(fn changeset ->
+            assert changeset.repo.in_transaction?()
+            Ecto.Changeset.add_error(changeset, :x, "invalid")
+          end)
+
+        assert {:error, invalid} = apply(PrepareTransactionRepo, unquote(operation), [changeset])
+        assert invalid.errors == [x: {"invalid", []}]
+        assert_received {:prepare_transaction, _, _}
+        assert_received {:prepared_transaction, PrepareTransactionRepo, true}
+        assert_received {:rollback, ^invalid}
+        refute_received {:prepare_transaction, _, _}
+      end
+    end
+
+    test "writes inside an existing transaction do not prepare another transaction" do
+      assert {:ok, schema} =
+               PrepareTransactionRepo.transact(fn ->
+                 %MySchemaEmbedsOne{}
+                 |> Ecto.Changeset.change()
+                 |> Ecto.Changeset.put_embed(:embed, %MyEmbed{x: "nested"})
+                 |> PrepareTransactionRepo.insert()
+               end)
+
+      assert schema.embed.x == "nested"
+      assert_received {:prepare_transaction, _, _}
+      assert_received {:prepared_transaction, PrepareTransactionRepo, true}
+      assert_received {:transaction, _, _}
+      refute_received {:prepare_transaction, _, _}
+      refute_received {:transaction, _, _}
+    end
+
+    test "scalar and invalid writes do not prepare transactions" do
+      assert {:ok, schema} = PrepareTransactionRepo.insert(%MySchema{x: "scalar"})
+
+      unchanged =
+        schema
+        |> Ecto.Changeset.change()
+        |> Ecto.Changeset.prepare_changes(fn _ -> flunk("unchanged update must not prepare") end)
+
+      assert {:ok, ^schema} = PrepareTransactionRepo.update(unchanged)
+
+      changeset = Ecto.Changeset.change(%MySchema{}) |> Ecto.Changeset.add_error(:x, "invalid")
+
+      assert {:error, %{valid?: false, errors: [x: {"invalid", []}]}} =
+               PrepareTransactionRepo.insert(changeset)
+
+      refute_received {:prepare_transaction, _, _}
+      refute_received {:transaction, _, _}
+    end
+
+    test "implicit transactions use the selected dynamic repo" do
+      {:ok, pid} =
+        PrepareTransactionRepo.start_link(name: nil, url: "ecto://user:pass@local/hello")
+
+      previous = PrepareTransactionRepo.put_dynamic_repo(pid)
+
+      try do
+        changeset =
+          %MySchemaEmbedsOne{}
+          |> Ecto.Changeset.change()
+          |> Ecto.Changeset.put_embed(:embed, %MyEmbed{x: "dynamic"})
+
+        assert {:ok, schema} = PrepareTransactionRepo.insert(changeset)
+        assert schema.embed.x == "dynamic"
+        assert_received {:prepare_transaction, _, _}
+        assert_received {:prepared_transaction, PrepareTransactionRepo, true}
+        refute_received {:prepare_transaction, _, _}
+      after
+        PrepareTransactionRepo.put_dynamic_repo(previous)
+      end
     end
   end
 
