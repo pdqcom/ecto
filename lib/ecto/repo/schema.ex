@@ -452,66 +452,85 @@ defmodule Ecto.Repo.Schema do
     changeset = Relation.surface_changes(changeset, struct, keep_fields ++ assocs)
     changeset = update_in(changeset.changes, &Map.drop(&1, drop_fields))
 
-    wrap_in_transaction(repo, name, adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fn ->
-      assoc_opts = assoc_opts(assocs, opts)
-      user_changeset = run_prepare(changeset, prepare)
+    wrap_in_transaction(
+      repo,
+      name,
+      adapter,
+      adapter_meta,
+      opts,
+      changeset,
+      assocs,
+      embeds,
+      prepare,
+      fn ->
+        assoc_opts = assoc_opts(assocs, opts)
+        user_changeset = run_prepare(changeset, prepare)
 
-      {changeset, parents, children, _} = pop_assocs(user_changeset, assocs)
-      changeset = process_parents(changeset, user_changeset, parents, [], adapter, assoc_opts)
+        {changeset, parents, children, _} = pop_assocs(user_changeset, assocs)
+        changeset = process_parents(changeset, user_changeset, parents, [], adapter, assoc_opts)
 
-      if changeset.valid? do
-        embeds = Ecto.Embedded.prepare(changeset, embeds, adapter, :insert)
+        if changeset.valid? do
+          embeds = Ecto.Embedded.prepare(changeset, embeds, adapter, :insert)
 
-        autogen_id = schema.__schema__(:autogenerate_id)
-        schema_meta = metadata(struct, autogen_id, opts)
-        changes = Map.merge(changeset.changes, embeds)
+          autogen_id = schema.__schema__(:autogenerate_id)
+          schema_meta = metadata(struct, autogen_id, opts)
+          changes = Map.merge(changeset.changes, embeds)
 
-        {changes, cast_extra, dump_extra, return_types, return_sources} =
-          autogenerate_id(autogen_id, changes, return_types, return_sources, adapter)
+          {changes, cast_extra, dump_extra, return_types, return_sources} =
+            autogenerate_id(autogen_id, changes, return_types, return_sources, adapter)
 
-        changes = Map.take(changes, keep_fields)
-        autogen = autogenerate_changes(schema, :insert, changes)
+          changes = Map.take(changes, keep_fields)
+          autogen = autogenerate_changes(schema, :insert, changes)
 
-        dump_changes =
-          dump_changes!(:insert, changes, autogen, schema, dump_extra, dumper, adapter)
+          dump_changes =
+            dump_changes!(:insert, changes, autogen, schema, dump_extra, dumper, adapter)
 
-        {on_conflict, conflict_cast_params} =
-          on_conflict(
-            on_conflict,
-            conflict_target,
-            schema_meta,
-            fn -> length(dump_changes) end,
-            dumper,
-            adapter
-          )
+          {on_conflict, conflict_cast_params} =
+            on_conflict(
+              on_conflict,
+              conflict_target,
+              schema_meta,
+              fn -> length(dump_changes) end,
+              dumper,
+              adapter
+            )
 
-        change_values = Enum.map(changes, &elem(&1, 1))
-        autogen_values = Enum.map(autogen, &elem(&1, 1))
+          change_values = Enum.map(changes, &elem(&1, 1))
+          autogen_values = Enum.map(autogen, &elem(&1, 1))
 
-        opts =
-          Keyword.put(
-            opts,
-            :cast_params,
-            change_values ++ autogen_values ++ cast_extra ++ conflict_cast_params
-          )
+          opts =
+            Keyword.put(
+              opts,
+              :cast_params,
+              change_values ++ autogen_values ++ cast_extra ++ conflict_cast_params
+            )
 
-        args = [adapter_meta, schema_meta, dump_changes, on_conflict, return_sources, opts]
+          args = [adapter_meta, schema_meta, dump_changes, on_conflict, return_sources, opts]
 
-        case apply(user_changeset, adapter, :insert, args) do
-          {:ok, values} ->
-            values = dump_extra ++ values
+          case apply(user_changeset, adapter, :insert, args) do
+            {:ok, values} ->
+              values = dump_extra ++ values
 
-            changeset
-            |> load_changes(:loaded, return_types, values, embeds, autogen, adapter, schema_meta)
-            |> process_children(user_changeset, children, adapter, assoc_opts)
+              changeset
+              |> load_changes(
+                :loaded,
+                return_types,
+                values,
+                embeds,
+                autogen,
+                adapter,
+                schema_meta
+              )
+              |> process_children(user_changeset, children, adapter, assoc_opts)
 
-          {:error, _} = error ->
-            error
+            {:error, _} = error ->
+              error
+          end
+        else
+          {:error, changeset}
         end
-      else
-        {:error, changeset}
       end
-    end)
+    )
   end
 
   defp do_insert(repo, _name, %Changeset{valid?: false} = changeset, tuplet) do
@@ -560,58 +579,79 @@ defmodule Ecto.Repo.Schema do
     changeset = update_in(changeset.changes, &Map.drop(&1, drop_fields))
 
     if changeset.changes != %{} or force? do
-      wrap_in_transaction(repo, name, adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fn ->
-        assoc_opts = assoc_opts(assocs, opts)
-        user_changeset = run_prepare(changeset, prepare)
+      wrap_in_transaction(
+        repo,
+        name,
+        adapter,
+        adapter_meta,
+        opts,
+        changeset,
+        assocs,
+        embeds,
+        prepare,
+        fn ->
+          assoc_opts = assoc_opts(assocs, opts)
+          user_changeset = run_prepare(changeset, prepare)
 
-        {changeset, parents, children, reset_parents} = pop_assocs(user_changeset, assocs)
+          {changeset, parents, children, reset_parents} = pop_assocs(user_changeset, assocs)
 
-        changeset =
-          process_parents(changeset, user_changeset, parents, reset_parents, adapter, assoc_opts)
+          changeset =
+            process_parents(
+              changeset,
+              user_changeset,
+              parents,
+              reset_parents,
+              adapter,
+              assoc_opts
+            )
 
-        if changeset.valid? do
-          embeds = Ecto.Embedded.prepare(changeset, embeds, adapter, :update)
+          if changeset.valid? do
+            embeds = Ecto.Embedded.prepare(changeset, embeds, adapter, :update)
 
-          changes = changeset.changes |> Map.merge(embeds) |> Map.take(keep_fields)
-          autogen = autogenerate_changes(schema, :update, changes)
-          dump_changes = dump_changes!(:update, changes, autogen, schema, [], dumper, adapter)
+            changes = changeset.changes |> Map.merge(embeds) |> Map.take(keep_fields)
+            autogen = autogenerate_changes(schema, :update, changes)
+            dump_changes = dump_changes!(:update, changes, autogen, schema, [], dumper, adapter)
 
-          schema_meta = metadata(struct, schema.__schema__(:autogenerate_id), opts)
-          dump_filters = dump_fields!(:update, schema, filters, dumper, adapter)
+            schema_meta = metadata(struct, schema.__schema__(:autogenerate_id), opts)
+            dump_filters = dump_fields!(:update, schema, filters, dumper, adapter)
 
-          change_values = Enum.map(changes, &elem(&1, 1))
-          autogen_values = Enum.map(autogen, &elem(&1, 1))
-          filter_values = Enum.map(filters, &elem(&1, 1))
-          opts = Keyword.put(opts, :cast_params, change_values ++ autogen_values ++ filter_values)
-          args = [adapter_meta, schema_meta, dump_changes, dump_filters, return_sources, opts]
+            change_values = Enum.map(changes, &elem(&1, 1))
+            autogen_values = Enum.map(autogen, &elem(&1, 1))
+            filter_values = Enum.map(filters, &elem(&1, 1))
 
-          # If there are no changes or all the changes were autogenerated but not forced, we skip
-          {action, autogen} =
-            if changes != %{} or (autogen != [] and force?),
-              do: {:update, autogen},
-              else: {:noop, []}
+            opts =
+              Keyword.put(opts, :cast_params, change_values ++ autogen_values ++ filter_values)
 
-          case apply(user_changeset, adapter, action, args) do
-            {:ok, values} ->
-              changeset
-              |> load_changes(
-                :loaded,
-                return_types,
-                values,
-                embeds,
-                autogen,
-                adapter,
-                schema_meta
-              )
-              |> process_children(user_changeset, children, adapter, assoc_opts)
+            args = [adapter_meta, schema_meta, dump_changes, dump_filters, return_sources, opts]
 
-            {:error, _} = error ->
-              error
+            # If there are no changes or all the changes were autogenerated but not forced, we skip
+            {action, autogen} =
+              if changes != %{} or (autogen != [] and force?),
+                do: {:update, autogen},
+                else: {:noop, []}
+
+            case apply(user_changeset, adapter, action, args) do
+              {:ok, values} ->
+                changeset
+                |> load_changes(
+                  :loaded,
+                  return_types,
+                  values,
+                  embeds,
+                  autogen,
+                  adapter,
+                  schema_meta
+                )
+                |> process_children(user_changeset, children, adapter, assoc_opts)
+
+              {:error, _} = error ->
+                error
+            end
+          else
+            {:error, changeset}
           end
-        else
-          {:error, changeset}
         end
-      end)
+      )
     else
       {:ok, changeset.data}
     end
@@ -916,7 +956,12 @@ defmodule Ecto.Repo.Schema do
         to_remove = List.wrap(conflict_target)
         replace = replace_all_fields!(:replace_all, schema, to_remove)
 
-        if replace == [], do: raise(ArgumentError, "empty list of fields to update, use the `:replace` option instead")
+        if replace == [],
+          do:
+            raise(
+              ArgumentError,
+              "empty list of fields to update, use the `:replace` option instead"
+            )
 
         {{replace, [], conflict_target}, []}
 
@@ -924,7 +969,12 @@ defmodule Ecto.Repo.Schema do
         to_remove = List.wrap(conflict_target) ++ fields
         replace = replace_all_fields!(:replace_all_except, schema, to_remove)
 
-        if replace == [], do: raise(ArgumentError, "empty list of fields to update, use the `:replace` option instead")
+        if replace == [],
+          do:
+            raise(
+              ArgumentError,
+              "empty list of fields to update, use the `:replace` option instead"
+            )
 
         {{replace, [], conflict_target}, []}
 
@@ -1270,14 +1320,40 @@ defmodule Ecto.Repo.Schema do
     end)
   end
 
-  defp wrap_in_transaction(repo, name, adapter, adapter_meta, opts, changeset, assocs, embeds, prepare, fun) do
+  defp wrap_in_transaction(
+         repo,
+         name,
+         adapter,
+         adapter_meta,
+         opts,
+         changeset,
+         assocs,
+         embeds,
+         prepare,
+         fun
+       ) do
     %{changes: changes} = changeset
     changed = &Map.has_key?(changes, &1)
-    relations_changed? = Enum.any?(assocs, changed) or Enum.any?(embeds, changed)
+
+    relations_changed? =
+      prepare != [] or Enum.any?(assocs, changed) or
+        (function_exported?(adapter, :transaction, 3) and
+           not adapter.in_transaction?(adapter_meta) and
+           embeds_require_transaction?(changeset, embeds))
+
     wrap_in_transaction(repo, name, adapter, adapter_meta, opts, relations_changed?, prepare, fun)
   end
 
-  defp wrap_in_transaction(repo, name, adapter, adapter_meta, opts, relations_changed?, prepare, fun) do
+  defp wrap_in_transaction(
+         repo,
+         name,
+         adapter,
+         adapter_meta,
+         opts,
+         relations_changed?,
+         prepare,
+         fun
+       ) do
     if (relations_changed? or prepare != []) and
          function_exported?(adapter, :transaction, 3) and
          not adapter.in_transaction?(adapter_meta) do
@@ -1286,6 +1362,19 @@ defmodule Ecto.Repo.Schema do
     else
       fun.()
     end
+  end
+
+  # Embeds are stored in the parent's row. Only preparation callbacks can add
+  # database work that needs to be atomic with that row's write.
+  defp embeds_require_transaction?(changeset, embeds) do
+    Enum.any?(embeds, fn field ->
+      changeset.changes
+      |> Map.get(field)
+      |> List.wrap()
+      |> Enum.any?(fn %Changeset{prepare: prepare, data: %{__struct__: schema}} = embed ->
+        prepare != [] or embeds_require_transaction?(embed, schema.__schema__(:embeds))
+      end)
+    end)
   end
 
   defp dump_field!(action, schema, field, type, value, adapter) do

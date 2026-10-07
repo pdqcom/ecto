@@ -1359,8 +1359,9 @@ defmodule Ecto.Repo do
   This callback is only invoked in transactions.
 
   It is also invoked for transactions implicitly started by schema operations,
-  such as writes with associations, embeds, or `Ecto.Changeset.prepare_changes/2`
-  callbacks. If a schema operation runs inside an existing transaction, it does
+  such as writes with associations or `Ecto.Changeset.prepare_changes/2` callbacks
+  on the parent or its embeds. Embeds alone do not require a transaction.
+  If a schema operation runs inside an existing transaction, it does
   not invoke this callback again.
 
   ## Examples
