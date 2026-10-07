@@ -956,12 +956,7 @@ defmodule Ecto.Repo.Schema do
         to_remove = List.wrap(conflict_target)
         replace = replace_all_fields!(:replace_all, schema, to_remove)
 
-        if replace == [],
-          do:
-            raise(
-              ArgumentError,
-              "empty list of fields to update, use the `:replace` option instead"
-            )
+        if replace == [], do: raise(ArgumentError, "empty list of fields to update, use the `:replace` option instead")
 
         {{replace, [], conflict_target}, []}
 
@@ -969,12 +964,7 @@ defmodule Ecto.Repo.Schema do
         to_remove = List.wrap(conflict_target) ++ fields
         replace = replace_all_fields!(:replace_all_except, schema, to_remove)
 
-        if replace == [],
-          do:
-            raise(
-              ArgumentError,
-              "empty list of fields to update, use the `:replace` option instead"
-            )
+        if replace == [], do: raise(ArgumentError, "empty list of fields to update, use the `:replace` option instead")
 
         {{replace, [], conflict_target}, []}
 
@@ -1336,7 +1326,7 @@ defmodule Ecto.Repo.Schema do
     changed = &Map.has_key?(changes, &1)
 
     relations_changed? =
-      prepare != [] or Enum.any?(assocs, changed) or
+      Enum.any?(assocs, changed) or
         (function_exported?(adapter, :transaction, 3) and
            not adapter.in_transaction?(adapter_meta) and
            embeds_require_transaction?(changeset, embeds))
